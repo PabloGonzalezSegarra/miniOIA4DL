@@ -38,20 +38,27 @@ class Dense(Layer):
         batch_size = grad_output.shape[0]
 
         # Gradient w.r.t. weights
-        grad_weights = np.zeros((self.in_features, self.out_features),dtype=np.float32)
-        for i in range(self.in_features):
-            for j in range(self.out_features):
-                for b in range(batch_size):
-                    grad_weights[i][j] += self.input[b][i] * grad_output[b][j]
+        # grad_weights = np.zeros((self.in_features, self.out_features),dtype=np.float32)
+        # for i in range(self.in_features):
+        #     for j in range(self.out_features):
+        #         for b in range(batch_size):
+        #             grad_weights[i][j] += self.input[b][i] * grad_output[b][j]
+        
+        # Substituimos los bucles por un .dot de numpy. Muy simple.
+        grad_weights = np.dot(self.input.T, grad_output)  
+
         # Gradient w.r.t. biases
         grad_biases = np.sum(grad_output, axis=0)
 
         # Gradient w.r.t. input
-        grad_input = np.zeros((batch_size, self.in_features),dtype=np.float32)
-        for b in range(batch_size):
-            for i in range(self.in_features):
-                for j in range(self.out_features):
-                    grad_input[b][i] += grad_output[b][j] * self.weights[i][j]
+        # grad_input = np.zeros((batch_size, self.in_features),dtype=np.float32)
+        # for b in range(batch_size):
+        #     for i in range(self.in_features):
+        #         for j in range(self.out_features):
+        #             grad_input[b][i] += grad_output[b][j] * self.weights[i][j]
+
+        # Substituimos los bucles por un .dot de numpy. Muy simple.
+        grad_input = np.dot(grad_output, self.weights.T)
         
         # Update weights and biases
         self.weights -= learning_rate * grad_weights
