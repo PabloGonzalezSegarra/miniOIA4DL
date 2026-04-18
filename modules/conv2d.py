@@ -142,7 +142,7 @@ class Conv2D(Layer):
 
     # PISTA: Se te ocurren otros algoritmos de convolución?
 
-    # -Implementacion im2col 
+    # Implementacion im2col 
     def _forward_im2col(self, input):
         batch_size, _, in_h, in_w = input.shape
         k_h, k_w = self.kernel_size, self.kernel_size
