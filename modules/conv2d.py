@@ -15,6 +15,8 @@ class Conv2D(Layer):
         # MODIFICAR: Añadir nuevo if-else para otros algoritmos de convolución
         if conv_algo == 0:
             self.mode = 'direct' 
+        elif conv_algo == 1:
+            self.mode = 'im2col'
         else:
             print(f"Algoritmo {conv_algo} no soportado aún")
             self.mode = 'direct' 
@@ -60,8 +62,10 @@ class Conv2D(Layer):
         # PISTA: Usar estos if-else si implementas más algoritmos de convolución
         if self.mode == 'direct':
             return self._forward_direct(input)
+        elif self.mode == 'im2col':
+            return self._forward_im2col(input)
         else:
-            raise ValueError("Mode must be 'direct")
+            raise ValueError("Mode must be 'direct' or 'im2col'")
 
     def backward(self, grad_output, learning_rate):
         # ESTO NO ES NECESARIO YA QUE NO VAIS A HACER BACKPROPAGATION
@@ -137,3 +141,42 @@ class Conv2D(Layer):
         return grad_input
 
     # PISTA: Se te ocurren otros algoritmos de convolución?
+
+    # -Implementacion im2col 
+    def _forward_im2col(self, input):
+        batch_size, _, in_h, in_w = input.shape
+        k_h, k_w = self.kernel_size, self.kernel_size
+
+        if self.padding > 0:
+            input = np.pad(input,((0, 0), (0, 0), (self.padding, self.padding), (self.padding, self.padding)), mode='constant').astype(np.float32)
+
+        out_h = (input.shape[2] - k_h) // self.stride + 1
+        out_w = (input.shape[3] - k_w) // self.stride + 1
+        output = np.zeros((batch_size, self.out_channels, out_h, out_w), dtype=np.float32)
+
+        # Hasta aqui todo igual
+
+        columns = [] # Creamos la lista para guardar las columnas
+
+        kernel = self.kernels.reshape(self.out_channels, -1) # Reshapeamos los kernels a 2D
+    
+        # Ara, para cada imagen del batch, pasamos a columnas, multiplicamos y guardamos
+        for b in range(batch_size):
+            columns = [] 
+             # Pasamos los patchs a columnas
+            for i in range(out_h):
+                for j in range(out_w):
+                    # Generado con ayuda de IA
+                    patch = input[b, :, i * self.stride:i * self.stride + k_h, j * self.stride:j * self.stride + k_w]
+                    columns.append(patch.reshape(-1))
+                    # Fin generado con ayuda de IA
+
+            columns = np.array(columns)   
+        
+            # Multiplicamos las columnas por los kernels
+            # Se ha usado IA para clavar las dimensiones
+            out_b = np.dot(kernel, columns.T) + self.biases.reshape(-1, 1)
+            output[b] = out_b.reshape(self.out_channels, out_h, out_w)
+            #Fin uso de IA
+
+        return output
