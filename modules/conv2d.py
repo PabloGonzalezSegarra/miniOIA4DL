@@ -1,6 +1,7 @@
 from modules.layer import Layer
 from modules.utils import *
-#from cython_modules.im2col import im2col_forward_cython
+# from cython_modules.im2col import im2col_forward_cython
+from cython_modules.gemm_blocked import gemm_blocked
 
 import numpy as np
 
@@ -17,6 +18,8 @@ class Conv2D(Layer):
             self.mode = 'direct' 
         elif conv_algo == 1:
             self.mode = 'im2col'
+        elif conv_algo == 2:
+            self.mode = 'im2col_cython'
         else:
             print(f"Algoritmo {conv_algo} no soportado aún")
             self.mode = 'direct' 
@@ -64,8 +67,10 @@ class Conv2D(Layer):
             return self._forward_direct(input)
         elif self.mode == 'im2col':
             return self._forward_im2col(input)
+        elif self.mode == 'im2col_cython':
+            return self._forward_im2col_cython(input)
         else:
-            raise ValueError("Mode must be 'direct' or 'im2col'")
+            raise ValueError("Mode must be 'direct', 'im2col' or 'im2col_cython'")
 
     def backward(self, grad_output, learning_rate):
         # ESTO NO ES NECESARIO YA QUE NO VAIS A HACER BACKPROPAGATION
@@ -158,11 +163,11 @@ class Conv2D(Layer):
 
         columns = [] # Creamos la lista para guardar las columnas
 
-        kernel = self.kernels.reshape(self.out_channels, -1) # Reshapeamos los kernels a 2D
+        kernel = self.kernels.reshape(self.out_channels, -1).astype(np.float32)
     
         # Ara, para cada imagen del batch, pasamos a columnas, multiplicamos y guardamos
         for b in range(batch_size):
-            columns = [] 
+            columns = []
              # Pasamos los patchs a columnas
             for i in range(out_h):
                 for j in range(out_w):
@@ -178,5 +183,43 @@ class Conv2D(Layer):
             out_b = np.dot(kernel, columns.T) + self.biases.reshape(-1, 1)
             output[b] = out_b.reshape(self.out_channels, out_h, out_w)
             #Fin uso de IA
+
+        return output
+
+        # Im2col con Cython
+    def _forward_im2col_cython(self, input):
+        batch_size, _, in_h, in_w = input.shape
+        k_h, k_w = self.kernel_size, self.kernel_size
+
+        if self.padding > 0:
+            input = np.pad(input,((0, 0), (0, 0), (self.padding, self.padding), (self.padding, self.padding)), mode='constant').astype(np.float32)
+
+        out_h = (input.shape[2] - k_h) // self.stride + 1
+        out_w = (input.shape[3] - k_w) // self.stride + 1
+        output = np.zeros((batch_size, self.out_channels, out_h, out_w), dtype=np.float32)
+
+        # Hasta aqui todo igual
+
+        columns = [] # Creamos la lista para guardar las columnas
+
+        kernel = self.kernels.reshape(self.out_channels, -1) # Reshapeamos los kernels a 2D
+    
+        # Ara, para cada imagen del batch, pasamos a columnas, multiplicamos y guardamos
+        for b in range(batch_size):
+            columns = []
+             # Pasamos los patchs a columnas
+            for i in range(out_h):
+                for j in range(out_w):
+                    # Generado con ayuda de IA
+                    patch = input[b, :, i * self.stride:i * self.stride + k_h, j * self.stride:j * self.stride + k_w]
+                    columns.append(patch.reshape(-1))
+                    # Fin generado con ayuda de IA
+
+            columns = np.array(columns, dtype=np.float32)  # float32 porque si no cython se enfada  
+        
+            # Multiplicamos las columnas por los kernels, usando la version de cython con gemm blocked
+            C_out = np.zeros((self.out_channels, out_h * out_w), dtype=np.float32)
+            gemm_blocked(kernel.astype(np.float32), columns.T.copy(), C_out, self.mc, self.nc, self.kc)
+            output[b] = C_out.reshape(self.out_channels, out_h, out_w)
 
         return output
