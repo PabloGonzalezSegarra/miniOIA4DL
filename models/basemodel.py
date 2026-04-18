@@ -13,9 +13,9 @@ class BaseModel:
         if curr_iter == 0:
             print("FW Layer;Batch;Time(s);Performance(imgs/s)")
         for layer in self.layers:
-            layer_start_time = time.time()
+            layer_start_time = time.perf_counter()
             x = layer.forward(x)
-            layer_time = time.time() - layer_start_time
+            layer_time = time.perf_counter() - layer_start_time
             if curr_iter == 0:
                 # Calculate performance metrics
                 images_per_second = imgs / layer_time
@@ -30,9 +30,9 @@ class BaseModel:
         if curr_iter == 0:
             print("BW Layer;Batch;Time(s);Performance(imgs/s)")
         for layer in reversed(self.layers):
-            layer_start_time = time.time()
+            layer_start_time = time.perf_counter()
             grad_output = layer.backward(grad_output, learning_rate)
-            layer_time = time.time() - layer_start_time
+            layer_time = time.perf_counter() - layer_start_time
             if curr_iter == 0:
                 if layer_time == 0.0:
                     layer_time = 1e-10
