@@ -2,6 +2,8 @@ from modules.layer import Layer
 from modules.utils import *
 # from cython_modules.im2col import im2col_forward_cython
 from cython_modules.gemm_blocked import gemm_blocked
+from cython_modules.gemm_omp_wrapper import gemm_omp
+from numpy.lib.stride_tricks import as_strided
 
 import numpy as np
 
@@ -20,6 +22,10 @@ class Conv2D(Layer):
             self.mode = 'im2col'
         elif conv_algo == 2:
             self.mode = 'im2col_cython'
+        elif conv_algo == 3:
+            self.mode = 'im2col_omp'
+        elif conv_algo == 4:
+            self.mode = 'im2col_striped_omp'
         else:
             print(f"Algoritmo {conv_algo} no soportado aún")
             self.mode = 'direct' 
@@ -69,8 +75,12 @@ class Conv2D(Layer):
             return self._forward_im2col(input)
         elif self.mode == 'im2col_cython':
             return self._forward_im2col_cython(input)
+        elif self.mode == 'im2col_omp':
+            return self._forward_im2col_omp(input)
+        elif self.mode == 'im2col_striped_omp':
+            return self._forward_im2col_striped_omp(input)
         else:
-            raise ValueError("Mode must be 'direct', 'im2col' or 'im2col_cython'")
+            raise ValueError("Mode must be 'direct', 'im2col', 'im2col_cython', 'im2col_omp' or 'im2col_striped_omp'")
 
     def backward(self, grad_output, learning_rate):
         # ESTO NO ES NECESARIO YA QUE NO VAIS A HACER BACKPROPAGATION
@@ -186,7 +196,7 @@ class Conv2D(Layer):
 
         return output
 
-        # Im2col con Cython
+    # Im2col con Cython
     def _forward_im2col_cython(self, input):
         batch_size, _, in_h, in_w = input.shape
         k_h, k_w = self.kernel_size, self.kernel_size
@@ -198,7 +208,6 @@ class Conv2D(Layer):
         out_w = (input.shape[3] - k_w) // self.stride + 1
         output = np.zeros((batch_size, self.out_channels, out_h, out_w), dtype=np.float32)
 
-        # Hasta aqui todo igual
 
         columns = [] # Creamos la lista para guardar las columnas
 
@@ -217,9 +226,101 @@ class Conv2D(Layer):
 
             columns = np.array(columns, dtype=np.float32)  # float32 porque si no cython se enfada  
         
+            # Hasta aqui todo igual
             # Multiplicamos las columnas por los kernels, usando la version de cython con gemm blocked
             C_out = np.zeros((self.out_channels, out_h * out_w), dtype=np.float32)
             gemm_blocked(kernel.astype(np.float32), columns.T.copy(), C_out, self.mc, self.nc, self.kc)
+            # Sumamos el bias
+            C_out += self.biases.reshape(-1, 1)
+            output[b] = C_out.reshape(self.out_channels, out_h, out_w)
+
+        return output
+    
+    def _forward_im2col_omp(self, input):
+        batch_size, _, in_h, in_w = input.shape
+        k_h, k_w = self.kernel_size, self.kernel_size
+
+        if self.padding > 0:
+            input = np.pad(input,((0, 0), (0, 0), (self.padding, self.padding), (self.padding, self.padding)), mode='constant').astype(np.float32)
+
+        out_h = (input.shape[2] - k_h) // self.stride + 1
+        out_w = (input.shape[3] - k_w) // self.stride + 1
+        output = np.zeros((batch_size, self.out_channels, out_h, out_w), dtype=np.float32)
+
+
+        columns = [] # Creamos la lista para guardar las columnas
+
+        kernel = self.kernels.reshape(self.out_channels, -1) # Reshapeamos los kernels a 2D
+    
+        # Ara, para cada imagen del batch, pasamos a columnas, multiplicamos y guardamos
+        for b in range(batch_size):
+            columns = []
+             # Pasamos los patchs a columnas
+            for i in range(out_h):
+                for j in range(out_w):
+                    # Generado con ayuda de IA
+                    patch = input[b, :, i * self.stride:i * self.stride + k_h, j * self.stride:j * self.stride + k_w]
+                    columns.append(patch.reshape(-1))
+                    # Fin generado con ayuda de IA
+
+            columns = np.array(columns, dtype=np.float32)  # float32 porque si no cython se enfada  
+        
+            # Hasta aqui todo igual
+            # Multiplicamos las columnas por los kernels, usando la version de cython con gemm blocked
+            C_out = np.zeros((self.out_channels, out_h * out_w), dtype=np.float32)
+            C_out = gemm_omp(kernel, columns.T.copy(), C_out, self.mc, self.kc, self.nc)
+            # Sumamos el bias
+            C_out += self.biases.reshape(-1, 1)
+            output[b] = C_out.reshape(self.out_channels, out_h, out_w)
+
+        return output
+    
+    def _forward_im2col_striped_omp(self, input):
+        batch_size, _, in_h, in_w = input.shape
+        k_h, k_w = self.kernel_size, self.kernel_size
+
+        if self.padding > 0:
+            input = np.pad(input,((0, 0), (0, 0), (self.padding, self.padding), (self.padding, self.padding)), mode='constant').astype(np.float32)
+
+        out_h = (input.shape[2] - k_h) // self.stride + 1
+        out_w = (input.shape[3] - k_w) // self.stride + 1
+        output = np.zeros((batch_size, self.out_channels, out_h, out_w), dtype=np.float32)
+
+
+        columns = [] # Creamos la lista para guardar las columnas
+
+        kernel = self.kernels.reshape(self.out_channels, -1) # Reshapeamos los kernels a 2D
+    
+        # Construimos la matriz im2col para todo el batch de una vez usando as_strided.
+        # Empleando la misma tecnica que en el maxpool2d, pero adaptada a la forma de los parches que necesitamos para im2col.
+        # Generado con ayuda de IA
+        sB, sC, sH, sW = input.strides
+
+        # La idea es crear ventanas que correspondan a cada parche que necesitamos para la convolución. De forma que después
+        # podemos simplemente aplanar esas ventanas y obetener las columnas que necesitamos para multiplicar por los kernels
+        # directamente. 
+        windows = as_strided(
+            input,
+            shape=(batch_size, out_h, out_w, self.in_channels, k_h, k_w),
+            strides=(sB, sH * self.stride, sW * self.stride, sC, sH, sW)
+        )
+        # Aplanamos a (B, out_h*out_w, C_in*k_h*k_w): cada fila es un parche aplanado,
+        # listo para multiplicar por los kernels como en im2col estándar.
+        # np.array fuerza la copia a memoria contigua (as_strided produce vistas no contiguas).
+        all_columns = np.array(windows.reshape(batch_size, out_h * out_w, self.in_channels * k_h * k_w), dtype=np.float32)
+        # Fin generado con ayuda de IA
+        
+
+        # Ara, para cada imagen del batch, pasamos a columnas, multiplicamos y guardamos
+        for b in range(batch_size):
+            columns = all_columns[b]  # shape: (out_h*out_w, C_in*K*K)
+        
+            # Multiplicamos las columnas por los kernels, usando la version de cython con gemm blocked
+            C_out = np.zeros((self.out_channels, out_h * out_w), dtype=np.float32)
+            C_out = gemm_omp(kernel, columns.T.copy(), C_out, self.mc, self.kc, self.nc)
+
+            # Sumamos el bias
+            C_out += self.biases.reshape(-1, 1)
             output[b] = C_out.reshape(self.out_channels, out_h, out_w)
 
         return output
