@@ -31,8 +31,10 @@ void gemm_omp( float *A, int lda_A, float *B, int lda_B,
 
     // Inicio bloque asistido por la IA, muy util porque menudo cacao
 
+    // El objetivo es el mismo, recorremos primero los bloques de B, luego la parte comun de 
+    // A y B y finalmente los bloques de A, de forma que maximizamos la reutilizacion de la cache. Pero esta vez paralelizamos el bucle exterior.
+    // Bloque externo: recorre las columnas de B y C en bloques de tamaño NC
     #pragma omp parallel for private(ic, pc, jc, i, p, j) schedule(static)
-    // Bloque externo: recorre las columnas de C en bloques de tamaño NC
     for (jc = 0; jc < N; jc += NC) {
         // Calculamos el tamaño real del bloque de columnas (puede ser menor que NC en el borde)
         int nc = (jc + NC > N) ? N - jc : NC;

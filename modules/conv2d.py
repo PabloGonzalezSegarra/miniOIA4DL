@@ -265,8 +265,7 @@ class Conv2D(Layer):
 
             columns = np.array(columns, dtype=np.float32)  # float32 porque si no cython se enfada  
         
-            # Hasta aqui todo igual
-            # Multiplicamos las columnas por los kernels, usando la version de cython con gemm blocked
+            # Multiplicamos con la version de omp en C
             C_out = np.zeros((self.out_channels, out_h * out_w), dtype=np.float32)
             C_out = gemm_omp(kernel, columns.T.copy(), C_out, self.mc, self.kc, self.nc)
             # Sumamos el bias
