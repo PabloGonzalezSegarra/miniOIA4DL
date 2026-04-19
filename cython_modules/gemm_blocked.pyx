@@ -3,7 +3,7 @@
 import numpy as np
 cimport numpy as cnp
 
-# Inicio bloque asistido por la IA
+# Inicio bloque generado por la IA
 
 def gemm_blocked(
     cnp.ndarray[cnp.float32_t, ndim=2] A,
@@ -29,4 +29,4 @@ def gemm_blocked(
 
     return C
 
-# Fin bloque asistido por la IA
+# Fin bloque generado por la IA
